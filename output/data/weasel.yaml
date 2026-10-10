@@ -42,6 +42,7 @@ style:
   vertical_text_with_wrap: false
   layout:
     align_type: center
+    candidate_rows: 1 # >1 enables expandable horizontal candidate pages
     max_width: 0	#set 0 to disable max width
     min_width: 160
     min_height: 0

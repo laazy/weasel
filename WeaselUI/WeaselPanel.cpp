@@ -670,7 +670,8 @@ bool WeaselPanel::_DrawCandidates() {
     int border_color = hilited ? m_style.hilited_candidate_border_color
                                : m_style.candidate_border_color;
     hilitefunc(i, back_color, 0, border_color, m_style.border);
-    if (i >= 0 && i < (int)labels.size()) {
+    if (i >= 0 && i < (int)labels.size() &&
+        !(m_ctx.cinfo.pageSize && labels[i].str.empty())) {
       auto rc = m_layout->GetCandidateLabelRect(i);
       auto label = FormatCandidateLabel(labels[i].str,
                                         m_style.label_text_format.c_str());

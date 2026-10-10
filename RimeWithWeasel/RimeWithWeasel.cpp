@@ -266,7 +266,8 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   if (m_disabled)
     return FALSE;
   RimeSessionId session_id = to_session_id(ipc_id);
-  Bool handled = rime_api->process_key(session_id, keyEvent.keycode,
+  Bool handled = _ProcessCandidateMatrixKey(keyEvent, ipc_id) ||
+                 rime_api->process_key(session_id, keyEvent.keycode,
                                        expand_ibus_modifier(keyEvent.mask));
   // vim_mode when keydown only
   if (!handled && !(keyEvent.mask & ibus::Modifier::RELEASE_MASK)) {
@@ -292,6 +293,7 @@ void RimeWithWeaselHandler::CommitComposition(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Commit composition: ipc_id = " << ipc_id;
   if (m_disabled)
     return;
+  get_session_status(ipc_id).viewport.Reset();
   rime_api->commit_composition(to_session_id(ipc_id));
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
@@ -301,6 +303,7 @@ void RimeWithWeaselHandler::ClearComposition(WeaselSessionId ipc_id) {
   DLOG(INFO) << "Clear composition: ipc_id = " << ipc_id;
   if (m_disabled)
     return;
+  get_session_status(ipc_id).viewport.Reset();
   rime_api->clear_composition(to_session_id(ipc_id));
   _UpdateUI(ipc_id);
   m_active_session = ipc_id;
@@ -313,7 +316,16 @@ void RimeWithWeaselHandler::SelectCandidateOnCurrentPage(
              << ", index = " << index;
   if (m_disabled)
     return;
-  rime_api->select_candidate_on_current_page(to_session_id(ipc_id), index);
+  auto& session = get_session_status(ipc_id);
+  if (!session.viewport.count) {
+    rime_api->select_candidate_on_current_page(session.session_id, index);
+  } else {
+    size_t global;
+    if (session.viewport.GlobalIndex(index, global)) {
+      rime_api->select_candidate(session.session_id, global);
+      session.viewport.Reset();
+    }
+  }
 }
 
 bool RimeWithWeaselHandler::HighlightCandidateOnCurrentPage(
@@ -322,8 +334,13 @@ bool RimeWithWeaselHandler::HighlightCandidateOnCurrentPage(
     EatLine eat) {
   DLOG(INFO) << "highlight candidate on current page, ipc_id = " << ipc_id
              << ", index = " << index;
-  bool res = rime_api->highlight_candidate_on_current_page(
-      to_session_id(ipc_id), index);
+  auto& session = get_session_status(ipc_id);
+  size_t global;
+  bool res = session.viewport.count
+                 ? (session.viewport.GlobalIndex(index, global) &&
+                    rime_api->highlight_candidate(session.session_id, global))
+                 : rime_api->highlight_candidate_on_current_page(
+                       session.session_id, index);
   _Respond(ipc_id, eat);
   _UpdateUI(ipc_id);
   return res;
@@ -334,7 +351,9 @@ bool RimeWithWeaselHandler::ChangePage(bool backward,
                                        EatLine eat) {
   DLOG(INFO) << "change page, ipc_id = " << ipc_id
              << (backward ? "backward" : "foreward");
-  bool res = rime_api->change_page(to_session_id(ipc_id), backward);
+  KeyEvent key(backward ? ',' : '.', 0);
+  bool res = _ProcessCandidateMatrixKey(key, ipc_id) ||
+             rime_api->change_page(to_session_id(ipc_id), backward);
   _Respond(ipc_id, eat);
   _UpdateUI(ipc_id);
   return res;
@@ -351,6 +370,7 @@ void RimeWithWeaselHandler::FocusIn(DWORD client_caps, WeaselSessionId ipc_id) {
 
 void RimeWithWeaselHandler::FocusOut(DWORD param, WeaselSessionId ipc_id) {
   DLOG(INFO) << "Focus out: ipc_id = " << ipc_id;
+  get_session_status(ipc_id).viewport.Reset();
   if (m_ui)
     m_ui->Hide();
   m_active_session = 0;
@@ -442,6 +462,105 @@ void RimeWithWeaselHandler::_ReadClientInfo(WeaselSessionId ipc_id,
   rime_api->set_option(session_id, "inline_preedit", Bool(inline_preedit));
   // show soft cursor on weasel panel but not inline
   rime_api->set_option(session_id, "soft_cursor", Bool(!inline_preedit));
+}
+
+static int CandidateRows(const SessionStatus& session, int columns) {
+  if (session.style.layout_type != UIStyle::LAYOUT_HORIZONTAL ||
+      !RIME_API_AVAILABLE(rime_api, candidate_list_from_index))
+    return 1;
+  return CandidateViewport::Rows(session.style.candidate_rows, columns,
+                                 MAX_CANDIDATES_COUNT);
+}
+
+bool RimeWithWeaselHandler::_ProcessCandidateMatrixKey(KeyEvent& key,
+                                                       WeaselSessionId ipc_id) {
+  auto& session = get_session_status(ipc_id);
+  const int code = key.keycode;
+  const bool arrow = code == ibus::Up || code == ibus::Down ||
+                     code == ibus::Left || code == ibus::Right;
+  if (session.style.candidate_rows <= 1 || (key.mask & ~ibus::LOCK_MASK) ||
+      (!arrow && code != ',' && code != '.'))
+    return false;
+  RIME_STRUCT(RimeContext, ctx);
+  if (!rime_api->get_context(session.session_id, &ctx))
+    return false;
+  int columns = ctx.menu.page_size;
+  int rows = CandidateRows(session, columns);
+  bool eligible =
+      ctx.composition.length > 0 && ctx.menu.num_candidates > 0 && rows > 1;
+  int selected =
+      ctx.menu.page_no * columns + ctx.menu.highlighted_candidate_index;
+  rime_api->free_context(&ctx);
+  if (!eligible)
+    return false;
+  auto& view = session.viewport;
+  const char* input = rime_api->get_input(session.session_id);
+  view.SyncInput(input ? input : "");
+  if (!view.expanded) {
+    if (code != ibus::Down)
+      return false;
+    view.expanded = true;
+    return true;
+  }
+  int target = arrow ? view.Move(selected, columns,
+                                 (code == ibus::Right) - (code == ibus::Left),
+                                 (code == ibus::Down) - (code == ibus::Up))
+                     : view.PageStart(code == ',', columns, rows);
+  // A missing next page leaves the selection unchanged, but consumes the key.
+  if (target != selected)
+    rime_api->highlight_candidate(session.session_id, target);
+  return true;
+}
+
+void RimeWithWeaselHandler::_BuildCandidateViewport(CandidateInfo& cinfo,
+                                                    RimeContext& ctx,
+                                                    WeaselSessionId ipc_id) {
+  auto& session = get_session_status(ipc_id);
+  auto& view = session.viewport;
+  int rows = CandidateRows(session, ctx.menu.page_size);
+  if (rows <= 1 || ctx.composition.length == 0) {
+    view.Reset();
+    return;
+  }
+  const char* input = rime_api->get_input(session.session_id);
+  view.SyncInput(input ? input : "");
+  cinfo.pageSize = ctx.menu.page_size;
+  const int page_start = ctx.menu.page_no * cinfo.pageSize;
+  view.start = page_start;
+  view.count = ctx.menu.num_candidates;
+  if (!view.expanded)
+    return;
+  int start = view.WindowStart(ctx.menu.page_no, cinfo.pageSize, rows);
+  RimeCandidateListIterator iter = {};
+  if (!rime_api->candidate_list_from_index(session.session_id, &iter, start))
+    return;
+  // The deleter frees iterator strings, not the stack-allocated iterator.
+  std::unique_ptr<RimeCandidateListIterator,
+                  decltype(rime_api->candidate_list_end)>
+      cleanup(&iter, rime_api->candidate_list_end);
+  CandidateInfo preview;
+  preview.pageSize = cinfo.pageSize;
+  preview.currentPage = cinfo.currentPage;
+  preview.is_last_page = cinfo.is_last_page;
+  preview.highlighted = page_start + cinfo.highlighted - start;
+  while (preview.candies.size() < static_cast<size_t>(rows * cinfo.pageSize) &&
+         rime_api->candidate_list_next(&iter)) {
+    Text text, comment, label;
+    text.str = escape_string(u8tow(iter.candidate.text));
+    if (iter.candidate.comment)
+      comment.str = escape_string(u8tow(iter.candidate.comment));
+    int index = iter.index - page_start;
+    if (index >= 0 && index < static_cast<int>(cinfo.labels.size()))
+      label = cinfo.labels[index];
+    preview.candies.push_back(std::move(text));
+    preview.comments.push_back(std::move(comment));
+    preview.labels.push_back(std::move(label));
+  }
+  if (!preview.empty()) {
+    cinfo = std::move(preview);
+    view.start = start;
+    view.count = static_cast<int>(cinfo.candies.size());
+  }
 }
 
 void RimeWithWeaselHandler::_GetCandidateInfo(CandidateInfo& cinfo,
@@ -555,6 +674,7 @@ void RimeWithWeaselHandler::_UpdateUI(WeaselSessionId ipc_id) {
 void RimeWithWeaselHandler::_LoadSchemaSpecificSettings(
     WeaselSessionId ipc_id,
     const std::string& schema_id) {
+  get_session_status(ipc_id).viewport.Reset();
   if (!m_ui)
     return;
   RimeConfig config;
@@ -748,6 +868,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
   RimeSessionId session_id = session_status.session_id;
   RIME_STRUCT(RimeCommit, commit);
   if (rime_api->get_commit(session_id, &commit)) {
+    session_status.viewport.Reset();
     actions.push_back("commit");
     std::wstring commit_text_w = escape_string(u8tow(commit.text));
     body.append(L"commit=").append(commit_text_w).append(L"\n");
@@ -885,6 +1006,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
       }
     }
     if (has_candidates) {
+      _BuildCandidateViewport(cinfo, ctx, ipc_id);
       std::wstringstream ss;
       boost::archive::text_woarchive oa(ss);
 
@@ -892,7 +1014,12 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
 
       auto s = ss.str();
       body.append(L"ctx.cand=").append(std::move(s)).append(L"\n");
+      body.append(L"ctx.candidate_columns=")
+          .append(std::to_wstring(cinfo.pageSize))
+          .append(L"\n");
     }
+    if (!has_candidates)
+      session_status.viewport.Reset();
     rime_api->free_context(&ctx);
   }
 
@@ -900,6 +1027,10 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
   actions.push_back("config");
   body.append(L"config.inline_preedit=")
       .append(std::to_wstring((int)session_status.style.inline_preedit))
+      .append(L"\n");
+
+  body.append(L"config.candidate_rows=")
+      .append(std::to_wstring(session_status.style.candidate_rows))
       .append(L"\n");
 
   // style
@@ -1228,6 +1359,9 @@ void LoadWeaselUIStyle(RimeConfig* config,
   _RimeGetIntStr(config, "style/layout/baseline", style.baseline, 0, 0, _abs);
   _RimeGetIntStr(config, "style/layout/linespacing", style.linespacing, 0, 0,
                  _abs);
+  _RimeGetIntStr(config, "style/layout/candidate_rows", style.candidate_rows);
+  style.candidate_rows =
+      std::clamp(style.candidate_rows, 1, MAX_CANDIDATES_COUNT);
   _RimeGetIntStr(config, "style/layout/min_width", style.min_width, 0, 0, _abs);
   _RimeGetIntStr(config, "style/layout/max_width", style.max_width, 0, 0, _abs);
   _RimeGetIntStr(config, "style/layout/min_height", style.min_height, 0, 0,

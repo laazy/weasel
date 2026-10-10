@@ -6,6 +6,7 @@
 #include <boost/serialization/string.hpp>
 
 namespace weasel {
+constexpr int MAX_CANDIDATES_COUNT = 100;
 
 enum TextAttributeType { NONE = 0, HIGHLIGHTED, LAST_TYPE };
 
@@ -80,24 +81,25 @@ struct CandidateInfo {
     totalPages = 0;
     highlighted = 0;
     is_last_page = false;
+    pageSize = 0;
     candies.clear();
     comments.clear();
     labels.clear();
   }
   bool empty() const { return candies.empty(); }
   bool operator==(const CandidateInfo& ci) {
-    if (currentPage != ci.currentPage || totalPages != ci.totalPages ||
-        highlighted != ci.highlighted || is_last_page != ci.is_last_page ||
-        notequal(candies, ci.candies) || notequal(comments, ci.comments) ||
-        notequal(labels, ci.labels))
+    if (pageSize != ci.pageSize || currentPage != ci.currentPage ||
+        totalPages != ci.totalPages || highlighted != ci.highlighted ||
+        is_last_page != ci.is_last_page || notequal(candies, ci.candies) ||
+        notequal(comments, ci.comments) || notequal(labels, ci.labels))
       return false;
     return true;
   }
   bool operator!=(const CandidateInfo& ci) {
-    if (currentPage != ci.currentPage || totalPages != ci.totalPages ||
-        highlighted != ci.highlighted || is_last_page != ci.is_last_page ||
-        notequal(candies, ci.candies) || notequal(comments, ci.comments) ||
-        notequal(labels, ci.labels))
+    if (pageSize != ci.pageSize || currentPage != ci.currentPage ||
+        totalPages != ci.totalPages || highlighted != ci.highlighted ||
+        is_last_page != ci.is_last_page || notequal(candies, ci.candies) ||
+        notequal(comments, ci.comments) || notequal(labels, ci.labels))
       return true;
     return false;
   }
@@ -110,6 +112,8 @@ struct CandidateInfo {
     }
     return false;
   }
+  // Optional IPC metadata; zero preserves the usual width-based layout.
+  int pageSize = 0;
   int currentPage;
   bool is_last_page;
   int totalPages;
@@ -249,6 +253,8 @@ struct UIStyle {
   bool vertical_text_with_wrap;
   bool vertical_right_to_left;
   // layout, with key name like style/layout/...
+  // Sent as config.candidate_rows to keep the existing style archive intact.
+  int candidate_rows = 1;
   int min_width;
   int max_width;
   int min_height;
@@ -368,7 +374,8 @@ struct UIStyle {
         client_caps(0) {}
   bool operator!=(const UIStyle& st) {
     return (
-        align_type != st.align_type || antialias_mode != st.antialias_mode ||
+        candidate_rows != st.candidate_rows || align_type != st.align_type ||
+        antialias_mode != st.antialias_mode ||
         preedit_type != st.preedit_type || layout_type != st.layout_type ||
         vertical_text_left_to_right != st.vertical_text_left_to_right ||
         vertical_text_with_wrap != st.vertical_text_with_wrap ||

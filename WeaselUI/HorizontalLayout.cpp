@@ -26,6 +26,7 @@ void HorizontalLayout::DoLayout() {
                       _auxiliaryRect);
   }
 
+  const int columns = _context.cinfo.pageSize;
   int row_cnt = 0;
   int max_width_of_rows = 0;
   std::vector<int> height_of_rows(candidates_count);
@@ -73,9 +74,11 @@ void HorizontalLayout::DoLayout() {
                                 : _candidateLabelRects[i].left;
       // if not the first candidate of current row, and current candidate's
       // right > _style.max_width
-      if (_style.max_width > 0 && (base_left > real_margin_x + offsetX) &&
-          (_candidateCommentRects[i].right - offsetX + real_margin_x >
-           _style.max_width)) {
+      if ((columns > 0 && i > 0 && i % columns == 0) ||
+          (columns == 0 && _style.max_width > 0 &&
+           (base_left > real_margin_x + offsetX) &&
+           (_candidateCommentRects[i].right - offsetX + real_margin_x >
+            _style.max_width))) {
         // max_width_of_rows current row
         max_width_of_rows =
             MAX(max_width_of_rows, _candidateCommentRects[i - 1].right);
@@ -131,6 +134,29 @@ void HorizontalLayout::DoLayout() {
         _candidateTextRects[i].OffsetRect(0, ot);
         _candidateCommentRects[i].OffsetRect(0, oc);
       }
+    }
+    // Align corresponding cells across rows, keeping existing text metrics.
+    if (columns > 0) {
+      std::vector<int> column_width(columns), column_left(columns);
+      column_left[0] = offsetX + real_margin_x;
+      for (int i = 0; i < candidates_count; ++i)
+        column_width[i % columns] =
+            MAX(column_width[i % columns],
+                _candidateCommentRects[i].right - _candidateRects[i].left);
+      for (int col = 1; col < columns; ++col)
+        column_left[col] = column_left[col - 1] + column_width[col - 1] +
+                           _style.candidate_spacing;
+      for (int i = 0; i < candidates_count; ++i) {
+        int dx = column_left[i % columns] - _candidateRects[i].left;
+        _candidateLabelRects[i].OffsetRect(dx, 0);
+        _candidateTextRects[i].OffsetRect(dx, 0);
+        _candidateCommentRects[i].OffsetRect(dx, 0);
+        _candidateRects[i].OffsetRect(dx, 0);
+        _candidateRects[i].right =
+            column_left[i % columns] + column_width[i % columns];
+      }
+      int last_col = MIN(candidates_count, columns) - 1;
+      max_width_of_rows = column_left[last_col] + column_width[last_col];
     }
     height = mintop_of_rows[row_cnt] + height_of_rows[row_cnt] - offsetY;
     width = MAX(width, max_width_of_rows);

@@ -6,7 +6,6 @@
 
 namespace weasel {
 
-const int MAX_CANDIDATES_COUNT = 100;
 const int STATUS_ICON_SIZE = GetSystemMetrics(SM_CXICON);
 
 #define IS_FULLSCREENLAYOUT(style)                               \

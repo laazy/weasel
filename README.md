@@ -47,6 +47,33 @@
 
 定製 Rime 的方法，請參考 Wiki [《定製指南》](https://github.com/rime/home/wiki/CustomizationGuide)。如需定製 Weasel 獨有的樣式和行為，請參考本倉庫 [Wiki 頁面](https://github.com/rime/weasel/wiki)。
 
+### 橫排候選矩陣
+
+在 `weasel.custom.yaml` 中設定展開行數：
+
+```yaml
+patch:
+  "style/horizontal": true
+  "style/layout/candidate_rows": 5
+```
+
+列數沿用輸入方案的 `menu/page_size`。例如在 `luna_pinyin.custom.yaml` 中設定：
+
+```yaml
+patch:
+  "menu/page_size": 5
+```
+
+重新部署後，第一次按 ↓ 展開 5 行 × 5 列，↑／↓／←／→ 在當前矩陣內按方向移動，邊界處停留。
+逗號／句號切換上一屏／下一屏（每屏最多 25 個），選中該屏第一個候選。
+數字鍵選擇有編號的當前行，鼠標可選擇任意候選。
+確認、取消、修改輸入或離開輸入窗口後也會收起。每個視窗預覽若干完整頁，末屏可能不足配置行數。
+
+`candidate_rows` 默認為 `1`，保留原有行為；大於 `1` 時啟用展開，僅適用於普通橫排窗口。
+行數及列數可分別調整，例如行數 `3`、頁大小 `4` 即為 4 列 × 3 行；總數不超過 100 個候選。
+矩陣按列數換行，優先於 `max_width` 的按寬度換行；長候選仍可能使窗口變寬。
+可在方案的 `style/layout/candidate_rows` 中覆蓋全局行數。
+
 致謝
 ----
 

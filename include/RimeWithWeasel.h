@@ -1,6 +1,7 @@
 #pragma once
 #include <WeaselIPC.h>
 #include <WeaselUI.h>
+#include <CandidateViewport.h>
 #include <map>
 #include <string>
 #include <mutex>
@@ -30,6 +31,7 @@ struct SessionStatus {
   RimeStatus status;
   bool __synced;
   RimeSessionId session_id;
+  weasel::CandidateViewport viewport;
 };
 typedef std::map<DWORD, SessionStatus> SessionStatusMap;
 typedef DWORD WeaselSessionId;
@@ -87,6 +89,11 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
                   WeaselSessionId ipc_id,
                   weasel::Context& ctx);
   void _GetContext(weasel::Context& ctx, RimeSessionId session_id);
+  bool _ProcessCandidateMatrixKey(weasel::KeyEvent& key,
+                                  WeaselSessionId ipc_id);
+  void _BuildCandidateViewport(weasel::CandidateInfo& cinfo,
+                               RimeContext& ctx,
+                               WeaselSessionId ipc_id);
   void _UpdateShowNotifications(RimeConfig* config, bool initialize = false);
 
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);

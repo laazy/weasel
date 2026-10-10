@@ -14,10 +14,12 @@ Configurator::~Configurator() {}
 
 void Configurator::Store(Deserializer::KeyType const& key,
                          std::wstring const& value) {
-  if (!m_pTarget->p_context || key.size() < 2)
+  if (key.size() < 2)
     return;
   bool bool_value = (!value.empty() && value != L"0");
-  if (key[1] == L"inline_preedit") {
+  if (key[1] == L"candidate_rows" && m_pTarget->p_style) {
+    m_pTarget->p_style->candidate_rows = _wtoi(value.c_str());
+  } else if (key[1] == L"inline_preedit" && m_pTarget->p_config) {
     m_pTarget->p_config->inline_preedit = bool_value;
   }
 }

@@ -73,7 +73,8 @@ void StandardLayout::RecalculateSizes() {
   _candidateCommentSizes.clear();
   for (size_t i = 0; i < candidates.size(); ++i) {
     CSize labelSize(0, 0), textSize(0, 0), commentSize(0, 0);
-    if (labelFontValid) {
+    if (labelFontValid &&
+        !(_context.cinfo.pageSize && labels.at(i).str.empty())) {
       const auto label = FormatCandidateLabel(labels.at(i).str,
                                               _style.label_text_format.c_str());
       _pD2D->GetTextSize(label, label.length(), _pD2D->pLabelFormat,
